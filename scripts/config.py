@@ -9,7 +9,7 @@ hf_model_path = "microsoft/deberta-v3-xsmall"
 model_name = hf_model_path.split("/")[-1]
 
 wandb_entity = "turing-arc"
-wandb_project = "wandb-examples"
+wandb_project = "christmas-wandb"
 
 full_data_artifact = f"{wandb_entity}/{wandb_project}/{dataset_name}:latest"
 train_data_artifact = f"{wandb_entity}/{wandb_project}/{train_dataset_name}:latest"
