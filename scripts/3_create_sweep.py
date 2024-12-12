@@ -37,7 +37,7 @@ sweep_config = {
             "max": 0.25,
         },
         "optim": {
-            "values": ["adamw_torch", "sgd", "adafactor", "lion_32bit"],
+            "values": ["adamw_torch", "sgd", "adafactor"],
         },
     },
 }

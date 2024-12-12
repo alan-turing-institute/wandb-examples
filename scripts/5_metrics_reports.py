@@ -1,37 +1,28 @@
 from argparse import ArgumentParser
 
+import numpy as np
 import wandb
 from config import (
-    model_artifact,
-    save_dir,
-    train_data_artifact,
     val_data_artifact,
     wandb_entity,
     wandb_project,
 )
 from datasets import load_from_disk
+from sklearn.metrics import (
+    confusion_matrix,
+    precision_recall_curve,
+)
+from torch.nn.functional import softmax
+from tqdm import tqdm
 from transformers import (
     DataCollatorWithPadding,
     DebertaV2ForSequenceClassification,
     DebertaV2Tokenizer,
-    Trainer,
-    TrainingArguments,
 )
 
 
-def train():
-    # wandb globally holds the relevant parameter sweep config for this run in
-    # wandb.config
-    run = wandb.init(project=wandb_project, entity=wandb_entity)
-
-    # Load the dataset and model
-    # - Mark the run as using the relevant artifacts as inputs
-    # - "Download" the artifacts (in this case actually just copy from file so we could
-    #    just load them directly, but you might have them remote/want to put them on a
-    #    faster disk etc.)
-    # - Load them with the relevant datasets/transformers classes
-    artifact = run.use_artifact(train_data_artifact, type="dataset")
-    train_dataset = load_from_disk(artifact.download())
+def evaluate(model_artifact):
+    run = wandb.init(project=wandb_project, entity=wandb_entity, job_type="evaluate")
 
     artifact = run.use_artifact(val_data_artifact, type="dataset")
     eval_dataset = load_from_disk(artifact.download())
@@ -41,12 +32,12 @@ def train():
     tokenizer = DebertaV2Tokenizer.from_pretrained(model_path)
     model = DebertaV2ForSequenceClassification.from_pretrained(
         model_path,
-        num_labels=train_dataset.features["label"].num_classes,
+        num_labels=eval_dataset.features["label"].num_classes,
         id2label={
-            i: label for i, label in enumerate(train_dataset.features["label"].names)
+            i: label for i, label in enumerate(eval_dataset.features["label"].names)
         },
         label2id={
-            label: i for i, label in enumerate(train_dataset.features["label"].names)
+            label: i for i, label in enumerate(eval_dataset.features["label"].names)
         },
         ignore_mismatched_sizes=True,
     )
@@ -55,55 +46,61 @@ def train():
     def preprocess_function(examples):
         return tokenizer(examples["text"], truncation=True)
 
-    train_dataset = train_dataset.map(preprocess_function, batched=True)
-    eval_dataset = eval_dataset.map(preprocess_function, batched=True)
     collator = DataCollatorWithPadding(tokenizer=tokenizer)
+    eval_dataset = eval_dataset.map(
+        preprocess_function, batched=True, remove_columns="text"
+    )
+    eval_dataset = eval_dataset.rename_column("label", "labels")
 
-    # Set Training Arguments. Some are hard-coded here, and others are kwargs from the
-    # sweep stored in wandb.config (in which we named parameters appropriately for
-    # compatibility with TrainingArguments)
-    training_args = TrainingArguments(
-        "tmp",
-        report_to="wandb",
-        eval_strategy="steps",
-        eval_steps=0.2,
-        save_strategy="no",
-        logging_strategy="steps",
-        logging_steps=0.005,
-        use_mps_device=True,
-        **wandb.config,
+    outputs = [model(**collator([sample])) for sample in tqdm(eval_dataset)]
+
+    probas = [softmax(out.logits).detach().numpy() for out in outputs]
+    pred_labels = [probs.argmax().item() for probs in probas]
+    true_labels = eval_dataset["labels"]
+
+    conf_matrix = confusion_matrix(true_labels, pred_labels)
+    class_acc = conf_matrix.diagonal() / conf_matrix.sum(axis=1)
+    run.log(
+        {
+            "Class Accuracy": wandb.Table(
+                data=[
+                    [lab, acc]
+                    for lab, acc in zip(
+                        eval_dataset.features["labels"].names, class_acc
+                    )
+                ],
+                columns=["class", "accuracy"],
+            )
+        }
     )
 
-    # Start training
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=collator,
-    )
-    trainer.train()
+    xs = []
+    ys = []
 
-    # Save and log final fine-tuned model as an artifact
-    ft_model_name = f"{run.name}-model"
-    trainer.save_model(f"{save_dir}/{ft_model_name}")
-    artifact = wandb.Artifact(ft_model_name, type="model")
-    artifact.add_reference(f"file://{save_dir}/{ft_model_name}")
-    run.log_artifact(artifact)
+    for class_idx in range(eval_dataset.features["labels"].num_classes):
+        mask = np.array(true_labels) == class_idx
+
+        precision, recall, thresholds = precision_recall_curve(
+            mask, np.array(probas).squeeze()[:, class_idx]
+        )
+        xs.append(precision)
+        ys.append(recall)
+
+    run.log(
+        {
+            "Precision Recall": wandb.plot.line_series(
+                xs=xs,
+                ys=ys,
+                keys=eval_dataset.features["labels"].names,
+                xname="precision",
+            )
+        }
+    )
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Launch a training job from the sweep")
-    parser.add_argument("sweep_id", help="ID of sweep to launch a job from")
-    parser.add_argument(
-        "--count", default=1, type=int, help="Number of training jobs to run"
-    )
+    parser = ArgumentParser(description="Evaluate a model from a previous job.")
+    parser.add_argument("model_artifact", help="Model artifact path to evaluate")
     args = parser.parse_args()
 
-    wandb.agent(
-        sweep_id=args.sweep_id,
-        entity=wandb_entity,
-        project=wandb_project,
-        function=train,
-        count=args.count,
-    )
+    evaluate(args.model_artifact)

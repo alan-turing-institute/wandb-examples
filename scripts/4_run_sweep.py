@@ -81,6 +81,7 @@ def train():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=collator,
+        processing_class=tokenizer,
     )
     trainer.train()
 
