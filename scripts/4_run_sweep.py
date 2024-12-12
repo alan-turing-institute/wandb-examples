@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 
 import wandb
 from config import (
-    model_artifact,
+    model_name,
     save_dir,
     train_data_artifact,
     val_data_artifact,
@@ -36,8 +36,9 @@ def train():
     artifact = run.use_artifact(val_data_artifact, type="dataset")
     eval_dataset = load_from_disk(artifact.download())
 
-    artifact = run.use_artifact(model_artifact, type="model")
-    model_path = artifact.download()
+    # artifact = run.use_artifact(model_artifact, type="model")
+    # model_path = artifact.download()
+    model_path = f"{save_dir}/{model_name}"
     tokenizer = DebertaV2Tokenizer.from_pretrained(model_path)
     model = DebertaV2ForSequenceClassification.from_pretrained(
         model_path,

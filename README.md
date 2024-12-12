@@ -6,6 +6,7 @@
 
 ```bash
 git clone https://github.com/alan-turing-institute/wandb-examples.git
+cd wandb-examples
 python -m venv .venv
 source .venv/bin/activate
 pip install .

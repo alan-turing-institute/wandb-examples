@@ -13,6 +13,7 @@ from wandb.sdk.wandb_run import Run
 
 def save_split(split: Dataset, name: str, run: Run):
     split.save_to_disk(f"{save_dir}/{name}")
+
     artifact = wandb.Artifact(name, type="dataset")
     artifact.add_reference(f"file://{save_dir}/{name}")
     run.log_artifact(artifact)
