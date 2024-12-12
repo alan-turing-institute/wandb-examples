@@ -5,7 +5,7 @@
 ### Python environment
 
 ```bash
-git clone
+git clone https://github.com/alan-turing-institute/wandb-examples.git
 python -m venv .venv
 source .venv/bin/activate
 pip install .
